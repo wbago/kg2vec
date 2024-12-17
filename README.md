@@ -6,7 +6,8 @@ Python3 implementation of the node2vec algorithm Aditya Grover, Jure Leskovec an
 
 # 介绍
 
-### 知识图谱图结构向量化，欢迎补充，我是何值康嘻嘻
+### 知识图谱图结构向量化，欢迎补充.
+##  ♥爱和勇气来自何值康♥
 
 ## Installation
 

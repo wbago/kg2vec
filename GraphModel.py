@@ -7,7 +7,7 @@ from torch_geometric.data import Data
 # FILES
 EMBEDDING_FILENAME = './embeddings.emb'  #嵌入文件，通常保存为 Word2Vec 格式
 EMBEDDING_MODEL_FILENAME = './embeddings.model'  #保存训练后的 Node2Vec 模型
-PT_FILE = './KG2Vec.pt'  #保存 PyTorch Geometric 数据的 .pt 文件
+PT_FILE = './G-KG2Vec.pt'  #保存 PyTorch Geometric 数据的 .pt 文件
 
 # 连接neo4j 替换成自己neo4j的用户名和密码
 graph = Graph("bolt://localhost:7687", auth=("neo4j", "245824"))
@@ -16,22 +16,21 @@ graph = Graph("bolt://localhost:7687", auth=("neo4j", "245824"))
 # Assuming you have nodes with 'id' and 'name' properties, and relationships with 'type'
 query = """
 MATCH (n)-[r]->(m)
-RETURN ID(n) AS source, ID(m) AS target, type(r) AS relationship_type
+RETURN ID(n) AS source, ID(m) AS target
 """
 data_list = list(graph.run(query))
 print(data_list)  # 打印返回的所有记录
 
 # 根据知识图谱构建networkXp[有向]图对象
-nx_graph = nx.DiGraph()     #用于生成嵌入的图结构
+nx_graph = nx.Graph()     #用于生成嵌入的图结构
 print(f"Number of nodes: {nx_graph.number_of_nodes()}")
 print(f"Number of edges: {nx_graph.number_of_edges()}")
 
 for record in data_list:
     source = record["source"]
     target = record["target"]
-    relationship_type = record["relationship_type"]
-    print(f"Adding edge: {source} -> {target}, type: {relationship_type}")
-    nx_graph.add_edge(source, target, relationship_type=relationship_type)
+    print(f"Adding edge: {source} -> {target}")
+    nx_graph.add_edge(source, target)
 print(f"Number of nodes: {nx_graph.number_of_nodes()}")
 print(f"Number of edges: {nx_graph.number_of_edges()}")
 
