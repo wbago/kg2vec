@@ -8,7 +8,7 @@ Python3 implementation of the node2vec algorithm Aditya Grover, Jure Leskovec an
 
 ### 知识图谱图结构向量化，欢迎补充，我是何值康嘻嘻
 
-## Installation
+## Installation1
 
 `pip install node2vec`
 
