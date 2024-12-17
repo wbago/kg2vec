@@ -1,4 +1,4 @@
-# Node2Vec
+# kg2vec
 [![Downloads](http://pepy.tech/badge/node2vec)](http://pepy.tech/project/node2vec)
 
 Python3 implementation of the node2vec algorithm Aditya Grover, Jure Leskovec and Vid Kocijan.
@@ -6,7 +6,7 @@ Python3 implementation of the node2vec algorithm Aditya Grover, Jure Leskovec an
 
 # Maintenance
 
-### I no longer have time to maintain this, if someone wants to pick the baton let me know
+### 知识图谱图结构向量化，欢迎补充，我是何值康嘻嘻
 
 ## Installation
 
