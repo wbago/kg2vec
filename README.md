@@ -4,15 +4,15 @@
 Python3 implementation of the node2vec algorithm Aditya Grover, Jure Leskovec and Vid Kocijan.
 [node2vec: Scalable Feature Learning for Networks. A. Grover, J. Leskovec. ACM SIGKDD International Conference on Knowledge Discovery and Data Mining (KDD), 2016.](https://snap.stanford.edu/node2vec/)
 
-# introduce
+# 介绍
 
 ### 知识图谱图结构向量化，欢迎补充，我是何值康嘻嘻
 
-## Installation1
+## Installation
 
 `pip install node2vec`
 
-## Usage
+## 使用方法
 ```python
 import networkx as nx
 from node2vec import Node2Vec
@@ -57,50 +57,43 @@ edges_kv.most_similar(str(('1', '2')))
 
 # Save embeddings for later use
 edges_kv.save_word2vec_format(EDGES_EMBEDDING_FILENAME)
-
 ```
 
-### Parameters
+### 参数
 
 #### `node2vec.Node2vec`
 
-- `Node2Vec` constructor:
-    1. `graph`: The first positional argument has to be a networkx graph. Node names must be all integers or all strings. On the output model they will always be strings.
-    2. `dimensions`: Embedding dimensions (default: 128)
+- `Node2Vec` 构造:
+    1. `graph`: 第一个位置参数必须是一个 networkx 图。节点名称必须是所有整数或所有字符串。在输出模型中，它们始终是字符串。
+    2. `dimensions`: 嵌入维度（默认：128）
     3. `walk_length`: Number of nodes in each walk (default: 80)
-    4. `num_walks`: Number of walks per node (default: 10)
-    5. `p`: Return hyper parameter (default: 1)
-    6. `q`: Input parameter (default: 1)
-    7. `weight_key`: On weighted graphs, this is the key for the weight attribute (default: 'weight')
-    8. `workers`: Number of workers for parallel execution (default: 1)
-    9. `sampling_strategy`: Node specific sampling strategies, supports setting node specific 'q', 'p', 'num_walks' and 'walk_length'.
-        Use these keys exactly. If not set, will use the global ones which were passed on the object initialization`
-    10. `quiet`: Boolean controlling the verbosity. (default: False)
-    11. `temp_folder`: String path pointing to folder to save a shared memory copy of the graph - Supply when working on graphs that are too big to fit in memory during algorithm execution.
-    12. `seed`: Seed for the random number generator (default: None). Deterministic results can be obtained if seed is set and `workers=1`.
+    4. `num_walks`: 每次遍历的节点数（默认：80）
+    5. `p`: 返回超参数（默认：1）
+    6. `q`: 输入参数（默认：1）
+    7. `weight_key`: 在加权图中，这是权重属性的键（默认：'weight'）
+    8. `workers`: 并行执行的工作进程数量（默认：1）
+    9. `sampling_strategy`: 节点特定采样策略，支持设置节点特定的 'q'、'p'、'num_walks' 和 'walk_length'。请准确使用这些键。如果没有设置，将使用对象初始化时传递的全局值
+    10. `quiet`: 控制详细程度的布尔值。（默认：False）
+    11. `temp_folder`: 字符串路径，指向保存图共享内存副本的文件夹 - 在处理在算法执行期间无法完全放入内存的图时提供。
+    12. `seed`: 随机数生成器的种子（默认：无）。如果设置了种子，则可以获得确定性结果。
 
-- `Node2Vec.fit` method:
-    Accepts any key word argument acceptable by gensim.Word2Vec
+- `Node2Vec.fit` method:方法：接受 gensim.Word2Vec 所接受的任何关键字参数
 
 #### `node2vec.EdgeEmbedder`
-
-`EdgeEmbedder` is an abstract class which all the concrete edge embeddings class inherit from.
-The classes are `AverageEmbedder`, `HadamardEmbedder`, `WeightedL1Embedder` and `WeightedL2Embedder` which their practical definition could be found in the [paper](https://arxiv.org/pdf/1607.00653.pdf) on table 1
-Notice that edge embeddings are defined for any pair of nodes, connected or not and even node with itself.
+EdgeEmbedder 是一个抽象类，所有具体的边嵌入类都继承自该类。这些类包括 AverageEmbedder 、 HadamardEmbedder 、 WeightedL1Embedder 和 WeightedL2Embedder ，它们的具体定义可以在论文的表 1 中找到。请注意，边嵌入被定义为任何一对节点，无论它们是否连接，甚至包括节点自身。
 
 - Constructor:
-    1. `keyed_vectors`: A gensim.models.KeyedVectors instance containing the node embeddings
-    2. `quiet`: Boolean controlling the verbosity. (default: False)
+    1. `keyed_vectors`: 一个包含节点嵌入的 gensim.models.KeyedVectors 实例
+    2. `quiet`: 控制详细程度的布尔值。（默认：False）
 
-- `EdgeEmbedder.__getitem__(item)` method, better known as `EdgeEmbedder[item]`:
-    1. `item` - A tuple consisting of 2 nodes from the `keyed_vectors` passed in the constructor. Will return the embedding of the edge.
+- `EdgeEmbedder.__getitem__(item)` 方法，也被称为 EdgeEmbedder[item]:
+    1. `item` - 由构造函数传入的 keyed_vectors 中的 2 个节点组成的元组。将返回边的嵌入。
 
-- `EdgeEmbedder.as_keyed_vectors` method: Returns a `gensim.models.KeyedVectors` instance with all possible node pairs in a *sorted* manner as string.
-  For example, for nodes ['1', '2', '3'] we will have as keys "('1', '1')", "('1', '2')", "('1', '3')", "('2', '2')", "('2', '3')" and "('3', '3')".
+- `EdgeEmbedder.as_keyed_vectors` 方法：以字符串形式返回所有可能的节点对，并按顺序排列的 gensim.models.KeyedVectors 实例。例如，对于节点 ['1', '2', '3']，我们将有键 "('1', '1')", "('1', '2')", "('1', '3')", "('2', '2')", "('2', '3')" 和 "('3', '3')"。
 
-## Caveats
-- Node names in the input graph must be all strings, or all ints
-- Parallel execution not working on Windows (`joblib` known issue). To run non-parallel on Windows pass `workers=1` on the `Node2Vec`'s constructor
+## 注意事项
+- 输入图中的节点名称必须全部为字符串，或全部为整数
+- 并行执行在 Windows 上不起作用（ joblib 已知问题）。要在 Windows 上以非并行方式运行，请通过 workers=1 在 Node2Vec 的构造函数中传递
 
 ## TODO
 - [x] Parallel implementation for walk generation
