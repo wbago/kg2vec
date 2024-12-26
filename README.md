@@ -1,8 +1,8 @@
 # node2vec
 
-###使用pip install -r requirements.txt先安装所有所需依赖
+##使用pip install -r requirements.txt先安装所有所需依赖
 
-###爱和勇气来自何值康！--xg
+##  ♥爱和勇气来自何值康♥ --xg
 
 This repository provides a reference implementation of *node2vec* as described in the paper:<br>
 > node2vec: Scalable Feature Learning for Networks.<br>
