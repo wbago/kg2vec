@@ -1,11 +1,9 @@
 import argparse
-import os
 import random
-import time
 
 import numpy as np
 import networkx as nx
-from py2neo import Graph
+from py2neo import Graph, Node, Relationship
 import node2vec
 from gensim.models import Word2Vec
 import torch
@@ -32,7 +30,7 @@ def parse_args():
     """
     微调
     """
-    parser.add_argument('--dimensions', type=int, default=128, help='嵌入的维度，默认为 128.')
+    parser.add_argument('--dimensions', type=int, default=256, help='嵌入的维度，默认为 128.')
 
     parser.add_argument('--walk-length', type=int, default=80, help='每次随机游走的长度，默认为 80.')
 
@@ -101,64 +99,221 @@ def learn_embeddings(walks):
 
 def construct_neo4j():  #通过neo4j直接生成图
     graph = Graph(args.input, auth=(args.username, args.password))
+
     query = """
     MATCH (n)-[r]->(m)
     RETURN ID(n) AS source, ID(m) AS target
     """
     data_list = list(graph.run(query))
-    # print(data_list)  # 打印返回的所有记录
-
+    # print(data_list)
     if args.directed:
         print("图结构为有向图")
         nx_graph = nx.DiGraph()
     else:
         print("图结构为无向图")
         nx_graph = nx.Graph()
+
         for record in data_list:
-            source = record["source"]
-            target = record["target"]
-            # print(f"Adding edge: {source} -> {target}")
-            nx_graph.add_edge(source, target)  #根据节点生成边
+            # 直接使用查询结果中的节点 ID
+            source = record["source"]  #获取源节点id,这里的源节点不是指源ip节点，而是流量的出口节点
+            # print(source)
+            target = record["target"]  #获取目标节点id，这里是流量的入口节点
+            # print(target)
+            # relation_type = record["relation_type"]     #获取关系类型
+            #添加节点，附带属性如标签等
+            nx_graph.add_node(source, labels=source, role="source")
+            nx_graph.add_node(target, labels=target, role="target")
+            nx_graph.add_edge(source, target)  # 根据节点生成边
             # 添加权重属性，默认为1
             nx_graph[source][target]['weight'] = 1  # 如果你的边没有明确的权重，给每条边赋予默认的权重1
+            nx_graph[target][source]['role'] = "relation_ship"
         if nx_graph.number_of_nodes() == 0 or nx_graph.number_of_edges() == 0:
             raise ValueError("从 Neo4j 中读取的图为空，请检查数据库或查询语句！")
     return nx_graph
 
 
-#图中随机边采样，生成不同edge_index，对node_features添加扰动（随机噪声）
-def generate_random_data(nx_graph, embeddings, num_samples=100):
+def map_node_ids_to_continuous_index(nx_G):
     """
-    生成包含随机子图的 Data 对象列表。
-
-    参数：
-    - nx_graph: NetworkX 图对象（原始图结构）。
-    - embeddings: 节点的嵌入（Node2Vec 生成的向量）。
-    - num_samples: 要生成的 Data 对象总数。
-
-    返回：
-    - data_list: 包含多个随机 Data 对象的列表。
+    将原始节点 ID 映射为从 1 开始的连续整数，跳过 0
     """
-    data_list = []
-    for _ in range(num_samples):
-        # 随机选择一些边，生成子图
-        edges = list(nx_graph.edges)
-        sampled_edges = random.sample(edges, int(len(edges) * 0.8))  # 采样 80% 的边
-        edge_index = torch.tensor(sampled_edges, dtype=torch.long).t().contiguous()
+    # 获取所有唯一节点 ID（排除0）
+    node_ids = [node for node in nx_G.nodes if node != 0]  # 排除 0
+    # 创建映射字典，确保从 1 开始
+    node_mapping = {old_id: new_id for new_id, old_id in enumerate(node_ids, start=1)}
 
-        # 对节点特征添加随机扰动
-        node_features = torch.tensor(embeddings, dtype=torch.float)
-        noise = torch.randn_like(node_features) * 0.01  # 添加 0.01 的噪声
-        perturbed_node_features = node_features + noise
+    # 保留 0 不做映射
+    node_mapping[0] = 0  # 如果 0 是特殊节点，保持它不变
 
-        # # 随机生成标签
-        # y = torch.tensor([random.randint(0, 1)])  # 0 或 1 的标签
+    return node_mapping
 
-        # 构建 Data 对象
-        data = Data(edge_index=edge_index, node_features=perturbed_node_features, y=torch.tensor([1]))
-        data_list.append(data)
 
-    return data_list
+def update_edge_index_with_mapping(edge_index, node_mapping):
+    """
+    根据节点 ID 映射更新 edge_index
+    """
+    new_edge_index = torch.tensor([
+        [
+            node_mapping.get(old_id.item(), old_id.item()) if old_id.item() != 0 else 0
+            for old_id in edge_index[0]
+        ],
+        [
+            node_mapping.get(old_id.item(), old_id.item()) if old_id.item() != 0 else 0
+            for old_id in edge_index[1]
+        ]
+    ])
+
+    return new_edge_index
+
+
+def extract_subgraph_from_full_graph(embeddings, nx_G, num_edges_per_subgraph=4):
+    """
+    提取图的子图，确保每个源节点（source）和目标节点（target）分别生成 edge_index。
+    """
+    subgraphs = []
+    node_list = nx_G.nodes
+    node_mapping = map_node_ids_to_continuous_index(nx_G)  # 获取节点ID映射
+
+    # 按照节点类型提取子图
+    for node in node_list:
+        # 获取当前节点的属性
+        node_attributes = nx_G.nodes[node]
+
+        # 初始化 edge_index_0 和 edge_index_1
+        edge_index_0 = []
+        edge_index_1 = []
+
+        # 处理 source 节点
+        if node_attributes.get("role") == "source":
+            # 获取与源IP相连的邻居
+            neighbors = list(nx_G.neighbors(node))
+            # Ensure at least `num_edges_per_subgraph` neighbors
+            selected_edges = random.sample(neighbors, min(num_edges_per_subgraph, len(neighbors)))
+
+            # 如果选取的边少于所需数量，填充缺少的边
+            edge_index_0 = [[node, neighbor] for neighbor in selected_edges]
+            if len(edge_index_0) < num_edges_per_subgraph:
+                # 用 0 填充到所需边数
+                edge_index_0.extend([[node, 0]] * (num_edges_per_subgraph - len(edge_index_0)))
+
+            edge_index_tensor_0 = torch.tensor(edge_index_0, dtype=torch.long).t().contiguous()
+            new_edge_index_0 = update_edge_index_with_mapping(edge_index_tensor_0, node_mapping)
+            # print(new_edge_index_0)
+
+        # 处理 target 节点
+        if node_attributes.get("role") == "target":
+            neighbors = list(nx_G.neighbors(node))
+            selected_edges = random.sample(neighbors, min(num_edges_per_subgraph, len(neighbors)))
+
+            edge_index_1 = [[node, neighbor] for neighbor in selected_edges]
+            if len(edge_index_1) < num_edges_per_subgraph:
+                edge_index_1.extend([[node, 0]] * (num_edges_per_subgraph - len(edge_index_1)))
+
+            edge_index_tensor_1 = torch.tensor(edge_index_1, dtype=torch.long).t().contiguous()
+            new_edge_index_1 = update_edge_index_with_mapping(edge_index_tensor_1, node_mapping)
+            # print(new_edge_index_1)
+
+        # 如果 node 不是 source 也不是 target，则跳过
+        if not edge_index_0 and not edge_index_1:
+            print("存在非s非t节点")
+            continue
+
+        # 如果某个 edge_index 为空，使用空的张量
+        if not edge_index_0:
+            new_edge_index_0 = torch.empty((2, 0), dtype=torch.long)
+        if not edge_index_1:
+            new_edge_index_1 = torch.empty((2, 0), dtype=torch.long)
+
+        # 合并 edge_index_0 和 edge_index_1
+        if new_edge_index_0.numel() > 0 and new_edge_index_1.numel() > 0:
+            combined_edge_index = torch.cat([new_edge_index_0, new_edge_index_1], dim=1)
+        elif new_edge_index_0.numel() > 0:
+            combined_edge_index = new_edge_index_0
+        elif new_edge_index_1.numel() > 0:
+            combined_edge_index = new_edge_index_1
+        else:
+            # 如果两个 edge_index 都为空，跳过
+            continue
+
+        subgraph_data = Data(
+            edge_index=combined_edge_index,
+            y=torch.tensor([1], dtype=torch.long),  # 标签
+            node_features=torch.tensor(embeddings, dtype=torch.float)  # 节点特征
+        )
+        subgraphs.append(subgraph_data)
+
+    return subgraphs
+
+
+# def extract_subgraph_from_full_graph(embeddings, nx_G, num_edges_per_subgraph=4):
+#     """
+#     提取图的子图，确保每个源节点（source）和目标节点（target）分别生成 edge_index[0] 和 edge_index[1]。
+#     """
+#     subgraphs = []
+#     node_list = nx_G.nodes
+#     node_mapping = map_node_ids_to_continuous_index(nx_G)  # 获取节点ID映射
+#
+#     # 初始化 edge_index
+#     edge_index_0 = []  # 存储源节点的边
+#     edge_index_1 = []  # 存储目标节点的边
+#
+#     # 按照节点类型提取子图
+#     for node in node_list:
+#         # 获取当前节点的属性
+#         node_attributes = nx_G.nodes[node]
+#
+#         # 如果当前节点是源节点
+#         if node_attributes.get("role") == "source":
+#             source_ip_node = node  # 当前源节点
+#             # 获取源端口节点 -> 流量特征节点 -> 目标端口节点 -> 目标IP节点     :source_ip_node -> source_port_node -> traffic_feature_node -> target_port_node -> target_ip_node
+#             source_port_node = list(nx_G.neighbors(source_ip_node))[0]  # 获取源端口节点
+#             traffic_feature_node = list(nx_G.neighbors(source_port_node))[0]  # 获取流量特征节点
+#             target_port_node = list(nx_G.neighbors(traffic_feature_node))[0]  # 获取目标端口节点
+#             target_ip_node = list(nx_G.neighbors(target_port_node))[0]  # 获取目标IP节点
+#
+#             # 将生成的边加入到 edge_index_0 中
+#             edge_index_0.append([source_ip_node, source_port_node])  # 源IP到源端口
+#             edge_index_0.append([source_port_node, traffic_feature_node])  # 源端口到流量特征
+#             edge_index_0.append([traffic_feature_node, target_port_node])  # 流量特征到目标端口
+#             edge_index_0.append([target_port_node, target_ip_node])  # 目标端口到目标IP
+#
+#         # 如果当前节点是目标节点
+#         elif node_attributes.get("role") == "target":
+#             target_ip_node = node  # 当前目标节点
+#             # 获取源IP节点 -> 源端口节点 -> 流量特征节点 -> 目标端口节点
+#             target_port_node = list(nx_G.neighbors(target_ip_node))[0]  # 获取目标端口节点
+#             traffic_feature_node = list(nx_G.neighbors(target_port_node))[0]  # 获取流量特征节点
+#             target_port_node = list(nx_G.neighbors(traffic_feature_node))[0]  # 获取目标端口节点
+#             target_ip_node = list(nx_G.neighbors(target_port_node))[0]  # 获取源IP节点
+#
+#             # 将生成的边加入到 edge_index_1 中
+#             edge_index_1.append([target_ip_node, target_port_node])  # 目标IP到目标端口
+#             edge_index_1.append([target_port_node, traffic_feature_node])  # 目标端口到流量特征
+#             edge_index_1.append([traffic_feature_node, source_port_node])  # 流量特征到源端口
+#             edge_index_1.append([source_port_node, source_ip_node])  # 源端口到源IP
+#
+#     # 如果选中的边少于所需数量，填充缺少的边
+#     if len(edge_index_0) < num_edges_per_subgraph:
+#         edge_index_0.extend([[0, 0]] * (num_edges_per_subgraph - len(edge_index_0)))  # 用 0 填充缺少的边
+#     if len(edge_index_1) < num_edges_per_subgraph:
+#         edge_index_1.extend([[0, 0]] * (num_edges_per_subgraph - len(edge_index_1)))  # 用 0 填充缺少的边
+#
+#     # 创建 edge_index，形状为 [2, num_edges_per_subgraph]，即 [2, 4]
+#     edge_index_0_tensor = torch.tensor(edge_index_0).t().contiguous()  # 转置后形成 [2, num_edges_per_subgraph] 的形状
+#     edge_index_1_tensor = torch.tensor(edge_index_1).t().contiguous()  # 转置后形成 [2, num_edges_per_subgraph] 的形状
+#
+#     # 更新 edge_index
+#     new_edge_index_0 = update_edge_index_with_mapping(edge_index_0_tensor, node_mapping)
+#     new_edge_index_1 = update_edge_index_with_mapping(edge_index_1_tensor, node_mapping)
+#
+#     # 创建子图数据对象
+#     subgraph_data = Data(
+#         edge_index=[new_edge_index_0, new_edge_index_1],  # 生成两个边集
+#         y=torch.tensor([1]),  # 标签
+#         node_features=torch.tensor(embeddings, dtype=torch.float)
+#     )
+#     subgraphs.append(subgraph_data)
+#
+#     return subgraphs
 
 
 def split_and_save_data(data_list, train_ratio, val_ratio, test_ratio):
@@ -199,8 +354,7 @@ def split_and_save_data(data_list, train_ratio, val_ratio, test_ratio):
 def main(args):
     # 1. 构建 NetworkX 图
     nx_G = construct_neo4j()
-    start_time = time.time()
-    print(f"NetworkX 图构建完成，用时 {time.time() - start_time:.2f} 秒。")
+    # 检查该节点是否是源节点
     print(f"NetworkX 图节点数: {nx_G.number_of_nodes()}, 边数: {nx_G.number_of_edges()}")
     # nx_G = read_graph()  #通过调用 read_graph() 来读取图数据并构建图
 
@@ -211,15 +365,12 @@ def main(args):
     embedding = learn_embeddings(walks)
 
     # 3. 使用 NetworkX 图和嵌入生成 Data 对象
-    data_list = generate_random_data(nx_G, embedding)
-
+    subgraphs = extract_subgraph_from_full_graph(embedding, nx_G)
     # 4. 按比例划分数据集并保存
     # 按比例划分数据集 (70% 训练, 15% 验证, 15% 测试)
-    split_and_save_data(data_list, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15)
+    split_and_save_data(subgraphs, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15)
 
 
 if __name__ == "__main__":
     args = parse_args()
     main(args)
-    # print(args.directed)
-    # print(args.undirected)

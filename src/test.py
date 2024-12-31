@@ -20,8 +20,8 @@ from sympy.codegen import Print
 # print(watch1[4])
 
 
-# loaded_data = torch.load('../dataset/data/DDoS2w/GCN_BS2w_test_data.pt')
-# print(loaded_data)
+loaded_data = torch.load('../predata/2-2v3/test_data.pt')
+print(loaded_data)
 # # 查看数据结构
 # print(loaded_data)
 # # print("Node features shape:", loaded_data.node_features.shape)
@@ -30,17 +30,27 @@ from sympy.codegen import Print
 # print(loaded_data[1].edge_index.shape)
 # print(loaded_data[1])
 # print(loaded_data[1].node_features.shape)
-
-loaded_data = torch.load('../predata/test_data.pt')
-
+#
+# import torch
+#
+# # 加载数据
+# loaded_data = torch.load('../predata/2-2v3/test_data.pt')
+#
+# 遍历数据
 for i, data in enumerate(loaded_data):
-    print(f"Data {i}:")
-    print(f"Edge Index:\n{data.edge_index}")
-    print(f"node_features:\n{data.node_features}")
+    if i < 50:
+        print(f"Data {i}:")
+        print(f"Edge Index:\n{data.edge_index}")
 
-    # 检查 x 是否为 None
-    if data.x is None:
-        print("Node features (x) are missing!")
+        # 尝试通过 'x' 访问节点特征
+        if hasattr(data, 'x'):
+            print(f"Node Features (x):\n{data.x}")
+        elif hasattr(data, 'node_features'):
+            print(f"Node Features (node_features):\n{data.node_features}")
+        else:
+            print("未找到节点特征属性。")
+
+        print('-' * 50)
     else:
-        print(f"Node Features (first 5 rows):\n{data.x[:5]}")
-    print('-' * 50)
+        break  # 使用 break 退出循环
+
